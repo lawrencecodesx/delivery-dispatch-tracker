@@ -17,6 +17,13 @@ exact HTTPS Vercel origin when deploying. `CORS_ALLOWED_ORIGINS` remains
 supported for existing configurations. The API does not enable cross-origin
 cookies.
 
+The required runtime environment variables are `DATABASE_URL` and
+`JWT_SECRET_KEY` (at least 32 characters). Optional settings are `APP_ENV`,
+`JWT_ALGORITHM`, `ACCESS_TOKEN_EXPIRE_MINUTES`,
+`ALLOW_PUBLIC_ROLE_REGISTRATION`, `ALLOWED_ORIGINS`, and
+`CORS_ALLOWED_ORIGINS`. PostgreSQL URLs using `postgres://` or
+`postgresql://` are normalized to the psycopg SQLAlchemy driver automatically.
+
 Install the requirements and start the API from this directory:
 
 ```powershell
