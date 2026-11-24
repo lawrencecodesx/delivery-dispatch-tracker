@@ -27,7 +27,7 @@ export function AuthPage() {
       </Link>
 
       <div className="auth-glass-panel relative z-10 grid w-full max-w-5xl rounded-3xl border border-white/10 bg-white/[0.06] shadow-2xl backdrop-blur-md lg:min-h-[650px] lg:grid-cols-[0.95fr_1.05fr]">
-        <aside className="auth-welcome-panel relative hidden min-h-full overflow-hidden border-r border-white/10 p-10 lg:flex lg:flex-col lg:justify-between xl:p-14">
+        <aside className="auth-welcome-panel relative hidden min-h-full overflow-hidden border-l border-white/10 p-10 lg:order-2 lg:flex lg:flex-col lg:justify-between xl:p-14">
           <div aria-hidden="true" className="auth-welcome-glow" />
           <div className="relative z-10 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-indigo-200">
             <span className="size-2 animate-pulse rounded-full bg-cyan-300" />
@@ -84,7 +84,7 @@ export function AuthPage() {
           </div>
         </aside>
 
-        <section className="auth-form-panel relative flex min-w-0 items-center px-6 py-12 sm:px-10 lg:px-12 xl:px-14">
+        <section className="auth-form-panel relative flex min-w-0 items-center px-6 py-12 sm:px-10 lg:order-1 lg:px-12 xl:px-14">
           <div className="mx-auto w-full max-w-md">
             <div className="mb-9 flex items-center gap-3">
               <span className="grid size-11 place-items-center rounded-2xl border border-indigo-300/20 bg-indigo-400/10 text-indigo-200">
