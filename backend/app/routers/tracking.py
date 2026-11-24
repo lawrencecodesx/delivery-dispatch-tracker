@@ -75,6 +75,9 @@ def get_latest_location(
         longitude=location.longitude,
         accuracy=location.accuracy,
         recorded_at=location.recorded_at,
+        temperature_c=location.temperature_c,
+        deviation_meters=location.deviation_meters,
+        is_off_route=location.is_off_route,
     )
 
 

@@ -1,8 +1,9 @@
 # app/models/__init__.py
 from app.models.assignment import Assignment, AssignmentStatus
+from app.models.delivery_pool import DeliveryPool, DeliveryPoolStatus
 from app.models.delivery_proof import DeliveryProof
 from app.models.notification import Notification
-from app.models.order import Order, OrderStatus
+from app.models.order import CargoTier, Order, OrderStatus
 from app.models.order_history import OrderStatusHistory
 from app.models.review import Review
 from app.models.rider_location import RiderLocation
@@ -14,6 +15,9 @@ __all__ = [
     "Assignment",
     "AssignmentStatus",
     "DeliveryProof",
+    "DeliveryPool",
+    "DeliveryPoolStatus",
+    "CargoTier",
     "Notification",
     "Order",
     "OrderStatus",

@@ -30,3 +30,13 @@ React/Vite frontend.
 
 Do not commit `.env` files, production credentials, or database dumps. The
 `.env.example` files contain placeholders for local configuration.
+
+## Render + Vercel deployment
+
+- Deploy the API and PostgreSQL database from [`render.yaml`](./render.yaml).
+  Set Render's `ALLOWED_ORIGINS` to the exact Vercel HTTPS origin plus any
+  local origins needed for development. Render runs Alembic migrations during
+  the build and checks `/healthz`.
+- Import [`frontend/`](./frontend/) as a Vercel project. Set
+  `VITE_API_BASE_URL` to the deployed API's `https://<render-host>/api/v1`.
+  The Vercel rewrite serves the React application for client-side routes.

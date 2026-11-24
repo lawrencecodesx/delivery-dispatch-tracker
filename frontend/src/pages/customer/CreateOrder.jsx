@@ -30,6 +30,7 @@ export function CreateOrder() {
     recipient_name: '',
     recipient_phone: '',
     package_description: '',
+    cargo_tier: 'STANDARD',
   })
   const [error, setError] = useState('')
   const distance = useMemo(() => distanceInKm(coordinates.pickup, coordinates.destination), [coordinates])
@@ -138,6 +139,15 @@ export function CreateOrder() {
             <label className="mt-4 block text-sm font-semibold text-slate-700">
               Package description
               <textarea className="form-input min-h-24 resize-y" maxLength={2000} name="package_description" onChange={updateField} placeholder="What are we delivering?" required value={form.package_description} />
+            </label>
+            <label className="mt-4 block text-sm font-semibold text-slate-700">
+              Cargo tier
+              <select className="form-input mt-1.5" name="cargo_tier" onChange={updateField} value={form.cargo_tier}>
+                <option value="STANDARD">Standard · ambient cargo</option>
+                <option value="COLD_CHAIN">Cold-Chain 2°C–8°C</option>
+                <option value="FRAGILE">Fragile · careful handling</option>
+              </select>
+              <span className="mt-1 block text-xs font-normal text-slate-500">The selected handling tier is included with your delivery request.</span>
             </label>
           </div>
         </div>

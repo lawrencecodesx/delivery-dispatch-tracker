@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import api from '../../services/api.js'
 import { StatusBadge } from '../../components/StatusBadge.jsx'
 import { DeliveryMap } from '../../components/DeliveryMap.jsx'
+import { CampusPools } from '../../components/CampusPools.jsx'
 
 export function CustomerDashboard() {
   const { data: orders = [], isLoading, error } = useQuery({
@@ -79,6 +80,7 @@ export function CustomerDashboard() {
           )}
         </div>
       </div>
+      <CampusPools />
       <div className="mt-7 overflow-hidden rounded-2xl border border-white/10 bg-white shadow-2xl">
         <h2 className="border-b border-slate-100 px-5 py-4 font-semibold text-slate-900">
           Recent orders

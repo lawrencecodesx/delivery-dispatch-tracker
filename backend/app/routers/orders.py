@@ -10,7 +10,7 @@ from app.database.connection import get_db
 from app.dependencies.authentication import get_current_user, require_roles
 from app.models.assignment import Assignment, AssignmentStatus
 from app.models.delivery_proof import DeliveryProof
-from app.models.order import Order, OrderStatus
+from app.models.order import CargoTier, Order, OrderStatus
 from app.models.order_history import OrderStatusHistory
 from app.models.review import Review
 from app.models.rider_profile import RiderProfile
@@ -26,8 +26,9 @@ from app.schemas.order import (
     ReviewCreate,
     ReviewResponse,
 )
+from app.services.audit_service import append_status_history, verify_status_history
 from app.services.order_service import transition_order
-from app.services.pricing import calculate_delivery_fee
+from app.services.pricing import calculate_delivery_fee, calculate_sla_deadline
 
 router = APIRouter(prefix="/api/v1/orders", tags=["orders"])
 
@@ -70,27 +71,39 @@ def create_order(
     while db.scalar(select(Order.id).where(Order.tracking_number == tracking_number)):
         tracking_number = secrets.token_hex(16).upper()
 
+    created_at = datetime.now(UTC)
+    order_values = payload.model_dump()
+    if order_values["cargo_tier"] == CargoTier.COLD_CHAIN and order_values["max_temp_c"] is None:
+        order_values["max_temp_c"] = 8.0
     order = Order(
         customer_id=user.id,
         tracking_number=tracking_number,
-        **payload.model_dump(),
+        **order_values,
         delivery_fee=calculate_delivery_fee(
             payload.pickup_latitude,
             payload.pickup_longitude,
             payload.destination_latitude,
             payload.destination_longitude,
         ),
+        created_at=created_at,
+        sla_deadline=calculate_sla_deadline(
+            payload.pickup_latitude,
+            payload.pickup_longitude,
+            payload.destination_latitude,
+            payload.destination_longitude,
+            created_at,
+        ),
     )
     db.add(order)
     db.flush()
-    db.add(
-        OrderStatusHistory(
-            order_id=order.id,
-            updated_by=user.id,
-            previous_status=None,
-            new_status=OrderStatus.PENDING,
-            remarks="Order created",
-        )
+    append_status_history(
+        db,
+        order_id=order.id,
+        actor_id=user.id,
+        old_status=None,
+        new_status=OrderStatus.PENDING,
+        remarks="Order created",
+        timestamp=created_at,
     )
     db.commit()
     db.refresh(order)
@@ -206,7 +219,7 @@ def get_order(
         db.scalars(
             select(OrderStatusHistory)
             .where(OrderStatusHistory.order_id == order.id)
-            .order_by(OrderStatusHistory.updated_at)
+            .order_by(OrderStatusHistory.sequence_num)
         ).all()
     )
     return OrderDetailResponse(
@@ -215,6 +228,23 @@ def get_order(
             OrderStatusHistoryResponse.model_validate(entry) for entry in histories
         ],
     )
+
+
+@router.get("/{order_id}/verify-audit")
+def verify_order_audit(
+    order_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, int | bool | None]:
+    order = _owned_or_operational_order(db, order_id, user)
+    histories = list(
+        db.scalars(
+            select(OrderStatusHistory)
+            .where(OrderStatusHistory.order_id == order.id)
+            .order_by(OrderStatusHistory.sequence_num)
+        ).all()
+    )
+    return verify_status_history(histories)
 
 
 @router.patch("/{order_id}/cancel", response_model=OrderResponse)

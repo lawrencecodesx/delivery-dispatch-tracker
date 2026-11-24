@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
@@ -37,6 +37,13 @@ class RiderLocation(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
     )
     accuracy: Mapped[float | None] = mapped_column(Float)
+    temperature_c: Mapped[float | None] = mapped_column(Float)
+    deviation_meters: Mapped[float] = mapped_column(
+        Float, default=0.0, server_default="0", nullable=False
+    )
+    is_off_route: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
 
     rider: Mapped["RiderProfile"] = relationship(back_populates="locations")
     assignment: Mapped["Assignment | None"] = relationship()

@@ -61,6 +61,7 @@ class RiderLocationCreate(BaseModel):
     longitude: float = Field(ge=-180, le=180)
     recorded_at: datetime | None = None
     accuracy: float | None = Field(default=None, ge=0)
+    temperature_c: float | None = Field(default=None, ge=-50, le=80)
 
 
 class RiderLocationResponse(BaseModel):
@@ -70,5 +71,8 @@ class RiderLocationResponse(BaseModel):
     longitude: float
     recorded_at: datetime
     accuracy: float | None
+    temperature_c: float | None = None
+    deviation_meters: float = 0.0
+    is_off_route: bool = False
 
     model_config = ConfigDict(from_attributes=True)

@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ArrowLeft, Clock3, MapPin, PackageCheck, Radio, ShieldCheck } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
 import { DeliveryMap } from '../../components/DeliveryMap.jsx'
@@ -23,6 +23,7 @@ function coordinates(latitude, longitude) {
 export function TrackOrder() {
   const { orderId } = useParams()
   const [deliveryCode, setDeliveryCode] = useState({ orderId: null, value: '' })
+  const [now, setNow] = useState(0)
   const codeMutation = useMutation({
     mutationFn: async () => (await api.post(`/orders/${orderId}/delivery-code`)).data,
     onSuccess: (result) => setDeliveryCode({ orderId, value: result.verification_code }),
@@ -45,6 +46,11 @@ export function TrackOrder() {
     retry: false,
   })
   const order = orderQuery.data
+  useEffect(() => {
+    if (!order?.sla_deadline) return undefined
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [order?.sla_deadline])
   const currentDeliveryCode = deliveryCode.orderId === orderId ? deliveryCode.value : ''
   const history = order?.status_history || []
   const activeStep = STATUS_STEPS.findIndex(([status]) => status === order?.current_status)
@@ -84,7 +90,10 @@ export function TrackOrder() {
         <>
           <div className="mb-7 mt-5 flex flex-wrap items-end justify-between gap-4">
             <div><p className="text-sm font-semibold text-blue-700">Delivery tracking</p><h1 className="mt-1 text-3xl font-black tracking-tight">Your delivery is in view.</h1><p className="mt-2 text-sm text-slate-500">Tracking number · <span className="font-semibold text-slate-700">{order.tracking_number}</span></p></div>
-            <StatusBadge status={order.current_status} />
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge status={order.current_status} />
+              {order.sla_breached && <span className="rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-bold text-emerald-800">25% SLA Rebate Credited · GH₵ {Number(order.rebate_credited_ghs || 0).toFixed(2)}</span>}
+            </div>
           </div>
           {order.current_status === 'in_transit' && (
             <div className="mb-5 rounded-2xl border border-blue-200 bg-blue-50 p-4 sm:flex sm:items-center sm:justify-between sm:gap-4">
@@ -104,13 +113,29 @@ export function TrackOrder() {
               </button>
             </div>
           )}
+          {order.sla_deadline && !['delivered', 'failed', 'returned', 'rejected', 'cancelled'].includes(order.current_status) && (
+            <div className="mb-5 grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:grid-cols-3">
+              <div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Delivery SLA</p><p className="mt-1 font-bold text-slate-900">{now ? formatCountdown(order.sla_deadline, now) : 'Calculating…'}</p></div>
+              <div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Participant fee</p><p className="mt-1 font-bold text-slate-900">GH₵ {Number(order.split_fee_ghs ?? order.delivery_fee).toFixed(2)}</p></div>
+              <div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">SLA rebate</p><p className="mt-1 font-bold text-slate-900">{order.sla_breached ? `GH₵ ${Number(order.rebate_credited_ghs || 0).toFixed(2)} credited` : `Up to GH₵ ${(Number(order.delivery_fee || 0) * 0.25).toFixed(2)} if late`}</p></div>
+            </div>
+          )}
           <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
             <div className="rounded-3xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
               <div className="flex items-center justify-between px-2 pb-3 pt-1">
                 <div><h2 className="font-bold">Route overview</h2><p className="mt-1 text-xs text-slate-500">Map refreshes every 15 seconds while this page is open.</p></div>
                 <span className={`flex items-center gap-2 text-xs font-semibold ${trackingQuery.data ? 'text-emerald-700' : 'text-slate-400'}`}><span className={`size-2 rounded-full ${trackingQuery.data ? 'animate-pulse bg-emerald-500' : 'bg-slate-300'}`} />{trackingQuery.data ? 'Live location' : 'Waiting for rider'}</span>
               </div>
-              <DeliveryMap markers={markers} className="h-[390px]" />
+              <DeliveryMap
+                geofences={[{
+                  id: `order-${order.id}-destination-fence`,
+                  center: coordinates(order.destination_latitude, order.destination_longitude),
+                  radius: 50,
+                  label: 'Destination · 50 m delivery geofence',
+                }]}
+                markers={markers}
+                className="h-[390px]"
+              />
               {!trackingQuery.data && <p className="px-2 pt-3 text-xs text-slate-500">Rider location will appear once the rider shares a location during an active delivery.</p>}
               {trackingQuery.data && <p className="px-2 pt-3 text-xs text-slate-500">Last update: {new Date(trackingQuery.data.recorded_at).toLocaleString()}</p>}
             </div>
@@ -149,4 +174,14 @@ export function TrackOrder() {
 
 function EmptyState() {
   return <div className="rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center"><PackageCheck className="mx-auto text-slate-300" size={32} /><p className="mt-3 font-semibold text-slate-700">No deliveries yet</p><p className="mt-1 text-sm text-slate-500">Create a delivery to start tracking its journey.</p><Link className="mt-5 inline-flex rounded-full bg-blue-600 px-5 py-2.5 text-sm font-bold text-white" to="/customer/create">Create a delivery</Link></div>
+}
+
+function formatCountdown(deadline, now) {
+  const remaining = new Date(deadline).getTime() - now
+  if (!Number.isFinite(remaining)) return 'SLA deadline unavailable'
+  if (remaining <= 0) return 'SLA window has ended'
+  const hours = Math.floor(remaining / 3600000)
+  const minutes = Math.floor((remaining % 3600000) / 60000)
+  const seconds = Math.floor((remaining % 60000) / 1000)
+  return hours ? `${hours}h ${minutes}m remaining` : `${minutes}m ${seconds}s remaining`
 }

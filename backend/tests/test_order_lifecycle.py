@@ -16,6 +16,12 @@ class RecordingSession:
     def add(self, instance: object) -> None:
         self.added.append(instance)
 
+    def scalar(self, _statement: object) -> None:
+        return None
+
+    def flush(self) -> None:
+        return None
+
 
 def test_status_lifecycle_matches_project_plan() -> None:
     assert ALLOWED_STATUS_TRANSITIONS == {

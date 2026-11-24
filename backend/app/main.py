@@ -2,7 +2,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.routers import auth, dispatch, notifications, orders, rider, tracking, users
+from app.routers import (
+    auth,
+    dispatch,
+    notifications,
+    orders,
+    pools,
+    rider,
+    tracking,
+    users,
+)
 
 app = FastAPI(
     title="Delivery Dispatch Tracker API",
@@ -11,7 +20,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ALLOWED_ORIGINS,
+    allow_origins=settings.allowed_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
@@ -19,6 +28,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(orders.router)
+app.include_router(pools.router)
 app.include_router(dispatch.router)
 app.include_router(rider.router)
 app.include_router(tracking.router)
@@ -32,3 +42,8 @@ def health_check():
         "status": "ok",
         "message": "Service is healthy and running"
     }
+
+
+@app.get("/healthz")
+def render_health_check() -> dict[str, str]:
+    return {"status": "ok"}

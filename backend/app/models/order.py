@@ -4,9 +4,11 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Numeric,
     String,
@@ -19,6 +21,7 @@ from app.database.base import Base
 
 if TYPE_CHECKING:
     from app.models.assignment import Assignment
+    from app.models.delivery_pool import DeliveryPool
     from app.models.delivery_proof import DeliveryProof
     from app.models.order_history import OrderStatusHistory
     from app.models.review import Review
@@ -39,11 +42,18 @@ class OrderStatus(str, enum.Enum):
     RETURNED = "returned"
 
 
+class CargoTier(str, enum.Enum):
+    STANDARD = "STANDARD"
+    COLD_CHAIN = "COLD_CHAIN"
+    FRAGILE = "FRAGILE"
+
+
 ORDER_STATUS_DB_TYPE = Enum(
     OrderStatus,
     name="order_status_enum",
     values_callable=lambda members: [member.value for member in members],
 )
+CARGO_TIER_DB_TYPE = Enum(CargoTier, name="cargo_tier_enum")
 
 
 class Order(Base):
@@ -88,8 +98,27 @@ class Order(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    cargo_tier: Mapped[CargoTier] = mapped_column(
+        CARGO_TIER_DB_TYPE, default=CargoTier.STANDARD, nullable=False
+    )
+    max_temp_c: Mapped[float | None] = mapped_column(Float)
+    is_compromised: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    pool_id: Mapped[int | None] = mapped_column(
+        ForeignKey("delivery_pools.id", name="fk_orders_pool_id_delivery_pools")
+    )
+    split_fee_ghs: Mapped[float | None] = mapped_column(Float)
+    sla_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sla_breached: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    rebate_credited_ghs: Mapped[float] = mapped_column(
+        Float, default=0.0, server_default="0", nullable=False
+    )
 
     customer: Mapped["User"] = relationship(back_populates="orders")
+    pool: Mapped["DeliveryPool | None"] = relationship(back_populates="orders")
     assignments: Mapped[list["Assignment"]] = relationship(
         back_populates="order", cascade="all, delete-orphan"
     )

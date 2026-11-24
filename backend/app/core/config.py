@@ -1,3 +1,4 @@
+import json
 from typing import Literal
 
 from pydantic import Field
@@ -19,6 +20,29 @@ class Settings(BaseSettings):
             "http://127.0.0.1:5174",
         ]
     )
+    ALLOWED_ORIGINS: str | None = None
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        if not self.ALLOWED_ORIGINS:
+            return self.CORS_ALLOWED_ORIGINS
+        raw_origins = self.ALLOWED_ORIGINS.strip()
+        if raw_origins.startswith("["):
+            parsed = json.loads(raw_origins)
+            if not isinstance(parsed, list) or not all(
+                isinstance(origin, str) for origin in parsed
+            ):
+                raise ValueError("ALLOWED_ORIGINS must be a comma-separated string or JSON list")
+            return parsed
+        return [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+
+    @property
+    def sqlalchemy_database_url(self) -> str:
+        if self.DATABASE_URL.startswith(("postgres://", "postgresql://")):
+            return self.DATABASE_URL.replace(
+                "postgres://", "postgresql+psycopg://", 1
+            ).replace("postgresql://", "postgresql+psycopg://", 1)
+        return self.DATABASE_URL
 
     model_config = SettingsConfigDict(
         env_file = ".env",

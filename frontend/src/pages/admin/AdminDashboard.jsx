@@ -16,6 +16,8 @@ import {
   X,
 } from 'lucide-react'
 import api, { apiErrorMessage } from '../../services/api.js'
+import { TelemetryAlerts } from '../../components/TelemetryAlerts.jsx'
+import { DeliveryMap } from '../../components/DeliveryMap.jsx'
 
 const ACTIVE_DELIVERY_STATUSES = new Set(['assigned', 'accepted', 'picked_up', 'in_transit'])
 const EMPTY_USERS = []
@@ -37,6 +39,7 @@ export function AdminDashboard() {
   const [search, setSearch] = useState('')
   const [actionMessage, setActionMessage] = useState('')
   const [actionError, setActionError] = useState('')
+  const [auditResults, setAuditResults] = useState({})
   const searchInputRef = useRef(null)
 
   const usersQuery = useQuery({
@@ -70,6 +73,18 @@ export function AdminDashboard() {
       setActionError(apiErrorMessage(requestError, 'Could not update this account. Please try again.'))
     },
   })
+  const auditMutation = useMutation({
+    mutationFn: async (orderId) => (await api.get(`/orders/${orderId}/verify-audit`)).data,
+    onSuccess: async (result, orderId) => {
+      setActionError('')
+      setAuditResults((current) => ({ ...current, [orderId]: result }))
+      setActionMessage(result.is_valid ? 'Order audit chain is valid.' : `Order audit issue found at sequence ${result.broken_at_sequence}.`)
+    },
+    onError: (requestError) => {
+      setActionMessage('')
+      setActionError(apiErrorMessage(requestError, 'Could not verify the order audit.'))
+    },
+  })
 
   const pendingUsers = useMemo(
     () => users.filter(
@@ -91,6 +106,16 @@ export function AdminDashboard() {
 
   const riders = users.filter((user) => String(user.role).toLowerCase() === 'rider')
   const activeDeliveries = orders.filter((order) => ACTIVE_DELIVERY_STATUSES.has(order.current_status))
+  const activeDeliveryMarkers = activeDeliveries.flatMap((order) => [
+    { id: `${order.id}-pickup`, type: 'pickup', position: [Number(order.pickup_latitude), Number(order.pickup_longitude)], label: `${order.tracking_number} · pickup` },
+    { id: `${order.id}-destination`, type: 'destination', position: [Number(order.destination_latitude), Number(order.destination_longitude)], label: `${order.tracking_number} · destination` },
+  ])
+  const activeDeliveryGeofences = activeDeliveries.map((order) => ({
+    id: `${order.id}-destination-fence`,
+    center: [Number(order.destination_latitude), Number(order.destination_longitude)],
+    radius: 50,
+    label: `${order.tracking_number} · 50 m delivery geofence`,
+  }))
   const completedOrders = orders.filter((order) => order.current_status === 'delivered')
   const revenue = completedOrders.reduce((total, order) => total + Number(order.delivery_fee || 0), 0)
   const riderTrend = dailySeries(riders)
@@ -182,6 +207,15 @@ export function AdminDashboard() {
       )}
       {actionError && <div className="admin-alert admin-alert-error" role="alert">{actionError}</div>}
       {actionMessage && <div className="admin-alert admin-alert-success" role="status">{actionMessage}</div>}
+      <TelemetryAlerts orders={orders} />
+
+      <motion.section animate="visible" className="admin-card admin-approval-card" initial="hidden" variants={rise}>
+        <div className="admin-card-heading">
+          <div><span className="admin-section-kicker">Live operations</span><h2>Active delivery geofences</h2><p>50 m completion zones around active destinations.</p></div>
+          <Activity size={20} />
+        </div>
+        <DeliveryMap markers={activeDeliveryMarkers} geofences={activeDeliveryGeofences} className="h-[320px]" />
+      </motion.section>
 
       <motion.div
         animate="visible"
@@ -446,6 +480,27 @@ export function AdminDashboard() {
             )}
           </motion.div>
         </AnimatePresence>
+      </motion.section>
+      <motion.section animate="visible" className="admin-card admin-approval-card" initial="hidden" variants={rise}>
+        <div className="admin-card-heading">
+          <div><span className="admin-section-kicker">Order integrity</span><h2>Audit verification</h2><p>Verify the audit trail for recent orders.</p></div>
+          <ShieldCheck size={20} />
+        </div>
+        {isOrdersUnavailable ? <p className="admin-empty-copy">{ordersQuery.isError ? 'Order audit data is unavailable.' : 'Loading orders…'}</p> : orders.length ? (
+          <div className="admin-transactions">
+            {orders.slice(0, 8).map((order) => {
+              const audit = auditResults[order.id]
+              return (
+                <div className="admin-transaction-row" key={order.id}>
+                  <span className="admin-transaction-icon"><ShieldCheck size={15} /></span>
+                  <span className="admin-transaction-copy"><strong>{order.tracking_number || `Order ${order.id}`}</strong><small>{order.current_status?.replaceAll('_', ' ') || 'Status unavailable'}</small></span>
+                  {audit && <span className={`admin-status-pill ${audit.is_valid ? 'status-active' : 'status-rejected'}`}><span />{audit.is_valid ? `Valid · ${audit.verified_records} records` : `Invalid · #${audit.broken_at_sequence}`}</span>}
+                  <button className="admin-approve-button" disabled={auditMutation.isPending} onClick={() => auditMutation.mutate(order.id)} type="button"><Check size={14} /> Verify SHA-256 chain</button>
+                </div>
+              )
+            })}
+          </div>
+        ) : <p className="admin-empty-copy">Orders will appear here when they are created.</p>}
       </motion.section>
     </section>
   )

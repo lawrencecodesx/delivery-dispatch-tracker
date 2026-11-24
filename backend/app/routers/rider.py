@@ -4,13 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.security import hash_password, verify_password
+from app.core.security import verify_password
 from app.database.connection import get_db
 from app.dependencies.authentication import require_roles
 from app.models.assignment import Assignment, AssignmentStatus
 from app.models.delivery_proof import DeliveryProof
 from app.models.notification import Notification
-from app.models.order import Order, OrderStatus
+from app.models.order import CargoTier, Order, OrderStatus
 from app.models.rider_location import RiderLocation
 from app.models.rider_profile import RiderAvailability, RiderProfile
 from app.models.user import User, UserRole
@@ -24,7 +24,12 @@ from app.schemas.rider import (
     RiderLocationResponse,
     RiderStatusUpdate,
 )
+from app.services.audit_service import append_audit_event
 from app.services.order_service import transition_order
+from app.services.tracking_service import (
+    distance_to_route_segment_meters,
+    haversine_meters,
+)
 
 router = APIRouter(
     prefix="/api/v1/rider",
@@ -143,6 +148,26 @@ def update_order_status(
     order = db.scalar(select(Order).where(Order.id == order_id).with_for_update())
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
+    if payload.status == OrderStatus.DELIVERED:
+        latest_location = db.scalar(
+            select(RiderLocation)
+            .where(RiderLocation.assignment_id == assignment.id)
+            .order_by(RiderLocation.recorded_at.desc())
+            .limit(1)
+        )
+        if latest_location is None or haversine_meters(
+            latest_location.latitude,
+            latest_location.longitude,
+            float(order.destination_latitude),
+            float(order.destination_longitude),
+        ) > 50.0:
+            raise HTTPException(
+                status_code=403, detail="Rider is outside the 50m drop-off geofence"
+            )
+        raise HTTPException(
+            status_code=409,
+            detail="Submit verified delivery proof to complete this order",
+        )
     if payload.status not in {OrderStatus.PICKED_UP, OrderStatus.IN_TRANSIT, OrderStatus.FAILED}:
         raise HTTPException(status_code=422, detail="Riders cannot set this order status")
     if payload.status == OrderStatus.IN_TRANSIT:
@@ -225,6 +250,21 @@ def submit_delivery_proof(
     order = db.scalar(select(Order).where(Order.id == order_id).with_for_update())
     if order is None or order.current_status != OrderStatus.IN_TRANSIT:
         raise HTTPException(status_code=409, detail="Order is not awaiting delivery verification")
+    latest_location = db.scalar(
+        select(RiderLocation)
+        .where(RiderLocation.assignment_id == assignment.id)
+        .order_by(RiderLocation.recorded_at.desc())
+        .limit(1)
+    )
+    if latest_location is None or haversine_meters(
+        latest_location.latitude,
+        latest_location.longitude,
+        float(order.destination_latitude),
+        float(order.destination_longitude),
+    ) > 50.0:
+        raise HTTPException(
+            status_code=403, detail="Rider is outside the 50m drop-off geofence"
+        )
     proof = db.scalar(
         select(DeliveryProof)
         .where(
@@ -312,8 +352,45 @@ def update_location(
         longitude=payload.longitude,
         recorded_at=recorded_at,
         accuracy=payload.accuracy,
+        temperature_c=payload.temperature_c,
     )
+    deviation_meters = distance_to_route_segment_meters(
+        payload.latitude,
+        payload.longitude,
+        float(order.pickup_latitude),
+        float(order.pickup_longitude),
+        float(order.destination_latitude),
+        float(order.destination_longitude),
+    )
+    location.deviation_meters = deviation_meters
+    location.is_off_route = deviation_meters > 500.0
     db.add(location)
+    if location.is_off_route:
+        append_audit_event(
+            db,
+            order_id=order.id,
+            actor_id=user.id,
+            status=order.current_status,
+            event="ROUTE_DEVIATION_DETECTED",
+        )
+    if (
+        order.cargo_tier == CargoTier.COLD_CHAIN
+        and payload.temperature_c is not None
+        and order.max_temp_c is not None
+        and payload.temperature_c > order.max_temp_c
+        and latest is not None
+        and latest.temperature_c is not None
+        and latest.temperature_c > order.max_temp_c
+        and not order.is_compromised
+    ):
+        order.is_compromised = True
+        append_audit_event(
+            db,
+            order_id=order.id,
+            actor_id=user.id,
+            status=order.current_status,
+            event="THERMAL_BREACH_ALERT",
+        )
     db.commit()
     db.refresh(location)
     return location

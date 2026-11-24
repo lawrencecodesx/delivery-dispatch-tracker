@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { MapPin, PackageCheck, ShieldCheck, Truck } from 'lucide-react'
 import { StatusBadge } from '../../components/StatusBadge.jsx'
@@ -7,6 +7,7 @@ import api, { apiErrorMessage } from '../../services/api.js'
 export function RiderDashboard() {
   const queryClient = useQueryClient()
   const [proofOrder, setProofOrder] = useState(null)
+  const [temperature, setTemperature] = useState(4)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const deliveriesQuery = useQuery({
@@ -42,6 +43,7 @@ export function RiderDashboard() {
         latitude: position.coords.latitude,
         longitude: position.coords.longitude,
         accuracy: position.coords.accuracy,
+        temperature_c: Number(temperature),
       })).data
     },
     onSuccess: () => { setError(''); setNotice('Your latest location has been shared with the customer.') },
@@ -85,8 +87,9 @@ export function RiderDashboard() {
                     )}
                     {assignment.assignment_status === 'accepted' && status === 'accepted' && <StatusAction label="Mark picked up" busy={busy} onClick={() => updateStatus.mutate({ orderId: assignment.order_id, status: 'picked_up' })} />}
                     {assignment.assignment_status === 'accepted' && status === 'picked_up' && <StatusAction label="Start delivery" busy={busy} onClick={() => updateStatus.mutate({ orderId: assignment.order_id, status: 'in_transit' })} />}
-                    {assignment.assignment_status === 'accepted' && status === 'in_transit' && <button className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700" onClick={() => { setError(''); setProofOrder({ id: assignment.order_id, tracking: order?.tracking_number }) }} type="button"><ShieldCheck size={17} /> Verify delivery</button>}
+                    {assignment.assignment_status === 'accepted' && status === 'in_transit' && <button className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700" onClick={() => { setError(''); setProofOrder({ id: assignment.order_id, tracking: order?.tracking_number, latitude: order?.destination_latitude, longitude: order?.destination_longitude }) }} type="button"><ShieldCheck size={17} /> Verify delivery</button>}
                     {assignment.assignment_status === 'accepted' && ['accepted', 'picked_up', 'in_transit'].includes(status) && <button className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 hover:border-blue-200 hover:text-blue-700 disabled:opacity-50" disabled={shareLocation.isPending} onClick={() => shareLocation.mutate(assignment.order_id)} type="button"><MapPin size={16} />{shareLocation.isPending ? 'Sharing…' : 'Share my location'}</button>}
+                    {assignment.assignment_status === 'accepted' && ['accepted', 'picked_up', 'in_transit'].includes(status) && <label className="w-full rounded-xl bg-slate-50 p-3 text-xs font-semibold text-slate-600">Cargo temperature · {temperature}°C<input aria-label="Cargo temperature in Celsius" className="mt-2 w-full accent-blue-600" max="15" min="2" onChange={(event) => setTemperature(Number(event.target.value))} step="1" type="range" value={temperature} /><span className="mt-1 flex justify-between font-normal text-slate-400"><span>2°C</span><span>15°C</span></span></label>}
                     {assignment.assignment_status === 'completed' && <p className="w-full rounded-xl bg-emerald-50 px-4 py-3 text-center text-sm font-semibold text-emerald-800">Delivery completed</p>}
                   </div>
                 </div>
@@ -96,7 +99,7 @@ export function RiderDashboard() {
         </div>
       ) : <div className="rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center"><Truck className="mx-auto text-slate-300" size={34} /><p className="mt-3 font-semibold text-slate-700">No assignments yet</p><p className="mt-1 text-sm text-slate-500">New delivery tasks will appear here when dispatch assigns them.</p></div>}
 
-      {proofOrder && <ProofModal order={proofOrder} onClose={() => setProofOrder(null)} onError={setError} onSuccess={async () => { setProofOrder(null); setError(''); setNotice('Delivery verified and marked complete.'); await refreshDeliveries() }} />}
+      {proofOrder && <ProofModal order={proofOrder} temperature={temperature} onClose={() => setProofOrder(null)} onError={setError} onSuccess={async () => { setProofOrder(null); setError(''); setNotice('Delivery verified and marked complete.'); await refreshDeliveries() }} />}
     </section>
   )
 }
@@ -109,11 +112,74 @@ function StatusAction({ label, busy, onClick }) {
   return <button className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50" disabled={busy} onClick={onClick} type="button"><PackageCheck size={17} />{busy ? 'Updating…' : label}</button>
 }
 
-function ProofModal({ order, onClose, onError, onSuccess }) {
+function ProofModal({ order, temperature, onClose, onError, onSuccess }) {
   const [code, setCode] = useState('')
   const [imageUrl, setImageUrl] = useState('')
   const [requestError, setRequestError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [location, setLocation] = useState(null)
+  const [locationError, setLocationError] = useState('')
+  const [checkingLocation, setCheckingLocation] = useState(false)
+  const [locationVerified, setLocationVerified] = useState(false)
+  const verifiedLocation = useRef(null)
+  const distanceMeters = location && order.latitude != null && order.longitude != null
+    ? distanceBetween(location.latitude, location.longitude, Number(order.latitude), Number(order.longitude))
+    : null
+  const destinationKnown = order.latitude != null && order.longitude != null
+  const geofenceSatisfied = destinationKnown && distanceMeters != null && distanceMeters <= 50
+
+  useEffect(() => {
+    if (!navigator.geolocation) return undefined
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const currentLocation = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        }
+        setLocation(currentLocation)
+        if (
+          verifiedLocation.current
+          && distanceBetween(
+            currentLocation.latitude,
+            currentLocation.longitude,
+            verifiedLocation.current.latitude,
+            verifiedLocation.current.longitude,
+          ) > 10
+        ) {
+          setLocationVerified(false)
+        }
+      },
+      () => setLocationError('Location access is unavailable. Allow GPS access to complete delivery.'),
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 12000 },
+    )
+    return () => navigator.geolocation.clearWatch(watchId)
+  }, [])
+
+  async function checkLocation() {
+    setLocationError('')
+    if (!navigator.geolocation) {
+      setLocationError('Location access is not supported by this browser.')
+      return
+    }
+    setCheckingLocation(true)
+    try {
+      const position = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }))
+      const currentLocation = { latitude: position.coords.latitude, longitude: position.coords.longitude }
+      await api.post('/rider/location', {
+        order_id: order.id,
+        ...currentLocation,
+        accuracy: position.coords.accuracy,
+        temperature_c: Number(temperature),
+      })
+      verifiedLocation.current = currentLocation
+      setLocation(currentLocation)
+      setLocationVerified(true)
+    } catch {
+      setLocationError('Could not submit your current location. Allow location access and try again.')
+    } finally {
+      setCheckingLocation(false)
+    }
+  }
 
   async function submit(event) {
     event.preventDefault()
@@ -142,13 +208,27 @@ function ProofModal({ order, onClose, onError, onSuccess }) {
         <h2 className="mt-4 text-xl font-black text-slate-950" id="proof-title">Verify handoff</h2>
         <p className="mt-1 text-sm text-slate-500">Ask the recipient for the 6-digit code. Order {order.tracking}.</p>
         <form className="mt-5 space-y-4" onSubmit={submit}>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-semibold text-slate-800">Destination geofence · 50 m</p><p className="mt-1 text-xs text-slate-500">{!destinationKnown ? 'Destination coordinates are unavailable; verify the handoff normally.' : distanceMeters == null ? 'Check your current GPS position before completing delivery.' : `${Math.round(distanceMeters)} m from destination`}</p></div>{destinationKnown && <button className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 disabled:opacity-50" disabled={checkingLocation} onClick={checkLocation} type="button">{checkingLocation ? 'Checking…' : 'Check location'}</button>}</div>
+            {locationError && <p className="mt-2 text-xs text-rose-700" role="alert">{locationError}</p>}
+            {destinationKnown && distanceMeters != null && <p className={`mt-2 inline-flex rounded-full px-3 py-1.5 text-xs font-semibold ${geofenceSatisfied && locationVerified ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>{Math.round(distanceMeters)}m away — {geofenceSatisfied && locationVerified ? 'Complete unlocked' : 'Complete unlocks within 50m'}</p>}
+          </div>
           <label className="block text-sm font-semibold text-slate-700">Recipient verification code<input autoComplete="one-time-code" className="form-input mt-1.5 text-center text-2xl font-black tracking-[0.35em]" inputMode="numeric" maxLength={6} minLength={6} onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))} pattern="[0-9]{6}" placeholder="000000" required value={code} /></label>
           <label className="block text-sm font-semibold text-slate-700">Proof photo URL<input className="form-input mt-1.5" onChange={(event) => setImageUrl(event.target.value)} placeholder="https://…" required type="url" value={imageUrl} /></label>
           <p className="text-xs leading-5 text-slate-500">The API requires a proof image URL and the recipient code. Use an approved image link; image upload is not provided by the current backend.</p>
           {requestError && <p className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{requestError}</p>}
-          <div className="flex gap-2 pt-1"><button className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600" onClick={onClose} type="button">Cancel</button><button className="flex-1 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50" disabled={submitting} type="submit">{submitting ? 'Verifying…' : 'Confirm delivery'}</button></div>
+          <div className="flex gap-2 pt-1"><button className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600" onClick={onClose} type="button">Cancel</button><button className="flex-1 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50" disabled={submitting || !geofenceSatisfied || !locationVerified} type="submit">{submitting ? 'Verifying…' : 'Confirm delivery'}</button></div>
         </form>
       </section>
     </div>
   )
+}
+
+function distanceBetween(latitudeA, longitudeA, latitudeB, longitudeB) {
+  const radians = (value) => value * Math.PI / 180
+  const deltaLatitude = radians(latitudeB - latitudeA)
+  const deltaLongitude = radians(longitudeB - longitudeA)
+  const a = Math.sin(deltaLatitude / 2) ** 2
+    + Math.cos(radians(latitudeA)) * Math.cos(radians(latitudeB)) * Math.sin(deltaLongitude / 2) ** 2
+  return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }

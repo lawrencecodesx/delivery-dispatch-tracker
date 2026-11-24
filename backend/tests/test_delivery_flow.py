@@ -1,9 +1,9 @@
 import asyncio
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import httpx
-from sqlalchemy import select
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -13,7 +13,15 @@ from app.database.base import Base
 from app.database.connection import get_db
 from app.dependencies.authentication import create_access_token
 from app.main import app
-from app.models import DeliveryProof, RiderAvailability, RiderProfile, User, UserRole
+from app.models import (
+    DeliveryProof,
+    Order,
+    OrderStatusHistory,
+    RiderAvailability,
+    RiderProfile,
+    User,
+    UserRole,
+)
 from app.services.pricing import calculate_delivery_fee
 
 
@@ -40,6 +48,11 @@ def test_customer_order_dispatch_rider_delivery_flow() -> None:
                 hashed_password=hash_password("password-long"),
                 role=UserRole.CUSTOMER,
             )
+            second_customer = User(
+                email="student@example.com",
+                hashed_password=hash_password("password-long"),
+                role=UserRole.CUSTOMER,
+            )
             dispatcher = User(
                 email="dispatcher@example.com",
                 hashed_password=hash_password("password-long"),
@@ -50,7 +63,7 @@ def test_customer_order_dispatch_rider_delivery_flow() -> None:
                 hashed_password=hash_password("password-long"),
                 role=UserRole.RIDER,
             )
-            db.add_all([customer, dispatcher, rider_user])
+            db.add_all([customer, second_customer, dispatcher, rider_user])
             db.flush()
             db.add(
                 RiderProfile(
@@ -62,6 +75,7 @@ def test_customer_order_dispatch_rider_delivery_flow() -> None:
             )
             db.commit()
             customer_token = create_access_token(customer.id)
+            second_customer_token = create_access_token(second_customer.id)
             dispatcher_token = create_access_token(dispatcher.id)
             rider_token = create_access_token(rider_user.id)
 
@@ -71,8 +85,55 @@ def test_customer_order_dispatch_rider_delivery_flow() -> None:
                 base_url="http://test",
             ) as client:
                 customer_headers = {"Authorization": f"Bearer {customer_token}"}
+                second_customer_headers = {
+                    "Authorization": f"Bearer {second_customer_token}"
+                }
                 dispatcher_headers = {"Authorization": f"Bearer {dispatcher_token}"}
                 rider_headers = {"Authorization": f"Bearer {rider_token}"}
+                response = await client.get("/healthz")
+                assert response.status_code == 200
+                assert response.json() == {"status": "ok"}
+
+                response = await client.post(
+                    "/api/v1/pools",
+                    headers=customer_headers,
+                    json={
+                        "zone_name": "Valco Hall Gate",
+                        "dropoff_lat": 5.112,
+                        "dropoff_lng": -1.291,
+                        "total_base_fee": 60,
+                    },
+                )
+                assert response.status_code == 201, response.text
+                pool_id = response.json()["id"]
+                join_payload = {
+                    "pickup_address": "Student residence",
+                    "pickup_latitude": 5.105,
+                    "pickup_longitude": -1.246,
+                    "recipient_name": "Student",
+                    "recipient_phone": "123456789",
+                    "package_description": "Books",
+                }
+                first_join = await client.post(
+                    f"/api/v1/pools/{pool_id}/join",
+                    headers=customer_headers,
+                    json=join_payload,
+                )
+                assert first_join.status_code == 201, first_join.text
+                second_join = await client.post(
+                    f"/api/v1/pools/{pool_id}/join",
+                    headers=second_customer_headers,
+                    json=join_payload,
+                )
+                assert second_join.status_code == 201, second_join.text
+                assert first_join.json()["tracking_number"] != second_join.json()["tracking_number"]
+                assert first_join.json()["verification_otp"] != second_join.json()["verification_otp"]
+                assert second_join.json()["split_fee_ghs"] == 30.0
+                response = await client.get("/api/v1/pools", headers=customer_headers)
+                assert response.status_code == 200
+                assert response.json()[0]["participant_count"] == 2
+                assert response.json()[0]["split_fee_ghs"] == 30.0
+
                 response = await client.post(
                     "/api/v1/orders",
                     headers=customer_headers,
@@ -86,6 +147,7 @@ def test_customer_order_dispatch_rider_delivery_flow() -> None:
                         "recipient_name": "Receiver",
                         "recipient_phone": "123456789",
                         "package_description": "Parcel",
+                        "cargo_tier": "COLD_CHAIN",
                         "delivery_fee": "0.01",
                     },
                 )
@@ -136,16 +198,20 @@ def test_customer_order_dispatch_rider_delivery_flow() -> None:
                     headers=rider_headers,
                     json={
                         "order_id": order_id,
-                        "latitude": 5.605,
-                        "longitude": -0.185,
+                        "latitude": 5.6,
+                        "longitude": -0.173,
+                        "temperature_c": 9.0,
+                        "recorded_at": datetime.now(UTC).isoformat(),
                     },
                 )
                 assert response.status_code == 201, response.text
+                assert response.json()["is_off_route"] is True
+                assert response.json()["deviation_meters"] > 500
                 response = await client.get(
                     f"/api/v1/tracking/{order_id}", headers=customer_headers
                 )
                 assert response.status_code == 200, response.text
-                assert response.json()["latitude"] == 5.605
+                assert response.json()["latitude"] == 5.6
 
                 response = await client.post(
                     f"/api/v1/orders/{order_id}/delivery-code",
@@ -153,6 +219,37 @@ def test_customer_order_dispatch_rider_delivery_flow() -> None:
                 )
                 assert response.status_code == 201, response.text
                 verification_code = response.json()["verification_code"]
+                response = await client.post(
+                    f"/api/v1/rider/orders/{order_id}/proof",
+                    headers=rider_headers,
+                    json={
+                        "image_url": "https://example.com/proof.jpg",
+                        "verification_code": verification_code,
+                    },
+                )
+                assert response.status_code == 403
+                assert response.json()["detail"] == "Rider is outside the 50m drop-off geofence"
+                response = await client.post(
+                    "/api/v1/rider/location",
+                    headers=rider_headers,
+                    json={
+                        "order_id": order_id,
+                        "latitude": 5.61,
+                        "longitude": -0.19,
+                        "temperature_c": 9.0,
+                        "recorded_at": (
+                            datetime.now(UTC) + timedelta(seconds=10)
+                        ).isoformat(),
+                    },
+                )
+                assert response.status_code == 201, response.text
+                assert response.json()["temperature_c"] == 9.0
+                with test_session() as db:
+                    order = db.get(Order, order_id)
+                    assert order is not None
+                    assert order.is_compromised is True
+                    order.sla_deadline = datetime.now(UTC) - timedelta(seconds=1)
+                    db.commit()
                 response = await client.get(
                     "/api/v1/notifications", headers=customer_headers
                 )
@@ -176,6 +273,39 @@ def test_customer_order_dispatch_rider_delivery_flow() -> None:
                     },
                 )
                 assert response.status_code == 200, response.text
+                with test_session() as db:
+                    order = db.get(Order, order_id)
+                    assert order is not None
+                    assert order.sla_breached is True
+                    assert order.rebate_credited_ghs == round(
+                        float(order.delivery_fee) * 0.25, 2
+                    )
+                response = await client.get(
+                    f"/api/v1/orders/{order_id}/verify-audit",
+                    headers=customer_headers,
+                )
+                assert response.status_code == 200, response.text
+                assert response.json()["is_valid"] is True
+                assert response.json()["verified_records"] >= 8
+                with test_session() as db:
+                    history = db.scalars(
+                        select(OrderStatusHistory)
+                        .where(OrderStatusHistory.order_id == order_id)
+                        .order_by(OrderStatusHistory.sequence_num)
+                    ).all()
+                    remarks = {entry.remarks for entry in history}
+                    assert "ROUTE_DEVIATION_DETECTED" in remarks
+                    assert "THERMAL_BREACH_ALERT" in remarks
+                    assert "SLA_BREACH_REBATE_ISSUED" in remarks
+                    history[0].record_hash = "f" * 64
+                    db.commit()
+                response = await client.get(
+                    f"/api/v1/orders/{order_id}/verify-audit",
+                    headers=customer_headers,
+                )
+                assert response.status_code == 200
+                assert response.json()["is_valid"] is False
+                assert response.json()["broken_at_sequence"] == 1
                 response = await client.post(
                     f"/api/v1/orders/{order_id}/review",
                     headers=customer_headers,

@@ -4,7 +4,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from app.models.order import OrderStatus
+from app.models.order import CargoTier, OrderStatus
 
 Latitude = Annotated[float, Field(ge=-90, le=90)]
 Longitude = Annotated[float, Field(ge=-180, le=180)]
@@ -21,6 +21,8 @@ class OrderCreate(BaseModel):
     recipient_name: str = Field(min_length=1, max_length=120)
     recipient_phone: str = Field(min_length=5, max_length=30)
     package_description: str = Field(min_length=1, max_length=2000)
+    cargo_tier: CargoTier = CargoTier.STANDARD
+    max_temp_c: float | None = Field(default=None, ge=-50, le=50)
 
 
 class OrderResponse(BaseModel):
@@ -39,6 +41,14 @@ class OrderResponse(BaseModel):
     delivery_fee: Decimal
     current_status: OrderStatus
     created_at: datetime
+    cargo_tier: CargoTier
+    max_temp_c: float | None
+    is_compromised: bool
+    pool_id: int | None
+    split_fee_ghs: float | None
+    sla_deadline: datetime | None
+    sla_breached: bool
+    rebate_credited_ghs: float
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -50,6 +60,9 @@ class OrderStatusHistoryResponse(BaseModel):
     new_status: OrderStatus
     remarks: str | None
     updated_at: datetime
+    sequence_num: int
+    prev_hash: str
+    record_hash: str
 
     model_config = ConfigDict(from_attributes=True)
 

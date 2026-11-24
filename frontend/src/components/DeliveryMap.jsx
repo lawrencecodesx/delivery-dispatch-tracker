@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { divIcon } from 'leaflet'
-import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet'
+import { Circle, MapContainer, Marker, Polyline, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet'
 
 const DEFAULT_CENTER = [5.6037, -0.187]
 const PIN_ICONS = {
@@ -53,6 +53,7 @@ function MapClickHandler({ onMapClick }) {
 
 export function DeliveryMap({
   markers = [],
+  geofences = [],
   onMapClick,
   className = '',
   zoom = 12,
@@ -79,6 +80,16 @@ export function DeliveryMap({
             </Marker>
           )
         })}
+        {geofences.map((geofence, index) => (
+          <Circle
+            center={geofence.center}
+            key={geofence.id ?? `geofence-${index}`}
+            pathOptions={{ color: '#e11d48', fillColor: '#fb7185', fillOpacity: 0.12, weight: 2, dashArray: '5 5' }}
+            radius={geofence.radius ?? 50}
+          >
+            {geofence.label && <Popup>{geofence.label}</Popup>}
+          </Circle>
+        ))}
         {positions.length > 1 && <Polyline positions={positions.slice(0, 2)} color="#2563eb" dashArray="7 8" />}
       </MapContainer>
     </div>

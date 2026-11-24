@@ -1,13 +1,14 @@
 from typing import Generator
-from sqlalchemy import create_engine
 
-from sqlalchemy.orm import sessionmaker,Session
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+
 from app.core.config import settings
 
 #Create the SQLAlchemy engine uisng the DATABASE_URL from settings
 
 engine = create_engine(
-    settings.DATABASE_URL,
+    settings.sqlalchemy_database_url,
     echo = True, #Set to false in production
     pool_pre_ping = True
 )

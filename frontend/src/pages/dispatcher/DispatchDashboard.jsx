@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowRight, Check, MapPinned, PackageCheck, RefreshCw, Truck, Users, X } from 'lucide-react'
 import { DeliveryMap } from '../../components/DeliveryMap.jsx'
 import { StatusBadge } from '../../components/StatusBadge.jsx'
+import { TelemetryAlerts } from '../../components/TelemetryAlerts.jsx'
 import api, { apiErrorMessage } from '../../services/api.js'
 
 const EMPTY_ORDERS = []
@@ -12,6 +13,7 @@ export function DispatchDashboard() {
   const [selectedOrder, setSelectedOrder] = useState(null)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
+  const [auditResults, setAuditResults] = useState({})
   const ordersQuery = useQuery({
     queryKey: ['dispatch-orders'],
     queryFn: async () => (await api.get('/dispatch/orders')).data,
@@ -31,6 +33,15 @@ export function DispatchDashboard() {
       },
     })).data,
     enabled: Boolean(selectedOrder),
+  })
+  const verifyAudit = useMutation({
+    mutationFn: async (orderId) => (await api.get(`/orders/${orderId}/verify-audit`)).data,
+    onSuccess: (result, orderId) => {
+      setError('')
+      setAuditResults((current) => ({ ...current, [orderId]: result }))
+      setNotice(result.is_valid ? 'Order audit chain is valid.' : `Order audit issue found at sequence ${result.broken_at_sequence}.`)
+    },
+    onError: (requestError) => setError(apiErrorMessage(requestError, 'Could not verify the order audit.')),
   })
 
   const refreshOperations = async () => {
@@ -66,6 +77,14 @@ export function DispatchDashboard() {
     { id: `${order.id}-pickup`, type: 'pickup', position: [Number(order.pickup_latitude), Number(order.pickup_longitude)], label: `${order.tracking_number} · pickup` },
     { id: `${order.id}-destination`, type: 'destination', position: [Number(order.destination_latitude), Number(order.destination_longitude)], label: `${order.tracking_number} · destination` },
   ]), [orders])
+  const geofences = useMemo(() => orders
+    .filter((order) => order.destination_latitude != null && order.destination_longitude != null && Number.isFinite(Number(order.destination_latitude)) && Number.isFinite(Number(order.destination_longitude)))
+    .map((order) => ({
+      id: `${order.id}-destination-fence`,
+      center: [Number(order.destination_latitude), Number(order.destination_longitude)],
+      radius: 50,
+      label: `${order.tracking_number} · 50 m delivery geofence`,
+    })), [orders])
 
   return (
     <section className="mx-auto max-w-[1500px]">
@@ -75,6 +94,7 @@ export function DispatchDashboard() {
       </div>
       {error && <p className="mb-4 rounded-xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p>}
       {notice && <p className="mb-4 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</p>}
+      <TelemetryAlerts />
       {(ordersQuery.error || ridersQuery.error) && <p className="mb-4 rounded-xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-700">Dispatch information could not be loaded. Check your connection and refresh.</p>}
 
       <div className="mb-5 grid gap-4 sm:grid-cols-3">
@@ -87,8 +107,8 @@ export function DispatchDashboard() {
         <div className="space-y-5">
           <div className="rounded-3xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
             <div className="flex items-center justify-between px-2 pb-3 pt-1"><div><h2 className="font-bold text-slate-900">Order operations map</h2><p className="mt-1 text-xs text-slate-500">Pickup and destination points for open orders</p></div><MapPinned size={20} className="text-blue-600" /></div>
-            <DeliveryMap markers={markers} className="h-[350px]" />
-            <div className="flex gap-5 px-2 pt-3 text-xs text-slate-500"><span className="inline-flex items-center gap-2"><i className="size-2.5 rounded-full bg-emerald-500" /> Pickups</span><span className="inline-flex items-center gap-2"><i className="size-2.5 rounded-full bg-rose-500" /> Destinations</span></div>
+            <DeliveryMap markers={markers} geofences={geofences} className="h-[350px]" />
+            <div className="flex flex-wrap gap-5 px-2 pt-3 text-xs text-slate-500"><span className="inline-flex items-center gap-2"><i className="size-2.5 rounded-full bg-emerald-500" /> Pickups</span><span className="inline-flex items-center gap-2"><i className="size-2.5 rounded-full bg-rose-500" /> Destinations</span><span>Dashed circle · 50 m destination geofence</span></div>
           </div>
           <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4"><div><h2 className="font-bold">Orders awaiting dispatch</h2><p className="mt-1 text-xs text-slate-500">Confirm new requests before assigning a rider.</p></div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600">{orders.length} open</span></div>
@@ -97,10 +117,11 @@ export function DispatchDashboard() {
                 {orders.map((order) => (
                   <li className="p-5" key={order.id}>
                     <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div><div className="flex flex-wrap items-center gap-2"><p className="font-bold text-slate-900">{order.tracking_number}</p><StatusBadge status={order.current_status} /></div><p className="mt-2 text-sm text-slate-600">{order.pickup_address}</p><p className="mt-1 flex items-center gap-1.5 text-sm text-slate-500"><ArrowRight size={14} />{order.destination_address}</p></div>
+                      <div><div className="flex flex-wrap items-center gap-2"><p className="font-bold text-slate-900">{order.tracking_number}</p><StatusBadge status={order.current_status} /><AuditBadge result={auditResults[order.id]} /></div><p className="mt-2 text-sm text-slate-600">{order.pickup_address}</p><p className="mt-1 flex items-center gap-1.5 text-sm text-slate-500"><ArrowRight size={14} />{order.destination_address}</p></div>
                       <p className="text-sm font-bold text-slate-800">GH₵ {Number(order.delivery_fee).toFixed(2)}</p>
                     </div>
                     <div className="mt-4 flex flex-wrap gap-2">
+                      <button className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3.5 py-2 text-xs font-bold text-slate-600 hover:border-emerald-200 hover:text-emerald-700 disabled:opacity-50" disabled={verifyAudit.isPending} onClick={() => verifyAudit.mutate(order.id)} type="button"><Check size={14} /> Verify SHA-256 chain</button>
                       {order.current_status === 'pending' ? (
                         <>
                           <button className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50" disabled={reviewOrder.isPending} onClick={() => reviewOrder.mutate({ orderId: order.id, decision: 'confirm' })} type="button"><Check size={15} /> Confirm order</button>
@@ -143,6 +164,11 @@ export function DispatchDashboard() {
       />}
     </section>
   )
+}
+
+function AuditBadge({ result }) {
+  if (!result) return <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600">Audit unchecked</span>
+  return <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${result.is_valid ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>{result.is_valid ? `Audit valid · ${result.verified_records}` : `Audit issue · #${result.broken_at_sequence}`}</span>
 }
 
 function Metric({ icon: Icon, label, value, tone }) {

@@ -29,8 +29,8 @@ from app.models import (
     User,
     UserRole,
 )
-from app.services.pricing import calculate_delivery_fee
 from app.schemas.user import UserCreate
+from app.services.pricing import calculate_delivery_fee
 
 TEST_SECRET = "security-suite-secret-value-with-32-plus-characters"
 
@@ -187,8 +187,8 @@ def security_context(monkeypatch: pytest.MonkeyPatch):
                 RiderLocation(
                     rider_id=rider.id,
                     assignment_id=owned_assignment.id,
-                    latitude=5.6,
-                    longitude=-0.18,
+                    latitude=5.61,
+                    longitude=-0.19,
                     recorded_at=datetime.now(UTC),
                 ),
                 RiderLocation(
@@ -572,11 +572,11 @@ def test_tracking_location_history_is_scoped_to_the_current_assignment(
     )
 
     assert latest.status_code == 200
-    assert latest.json()["latitude"] == 5.6
-    assert latest.json()["longitude"] == -0.18
+    assert latest.json()["latitude"] == 5.61
+    assert latest.json()["longitude"] == -0.19
     assert history.status_code == 200
     assert len(history.json()) == 1
-    assert history.json()[0]["latitude"] == 5.6
+    assert history.json()[0]["latitude"] == 5.61
 
     unauthorized_history = _request(
         "GET",

@@ -11,9 +11,11 @@ PowerShell generate the secret with:
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-`CORS_ALLOWED_ORIGINS` is a JSON array of trusted browser origins. The example
-allows the local Vite URLs; add the deployed frontend's exact HTTPS origin when
-deploying. The API does not enable cross-origin cookies.
+`ALLOWED_ORIGINS` is a comma-separated list (or JSON array) of trusted browser
+origins; by default the local Vite URLs are allowed. Add the deployed frontend's
+exact HTTPS Vercel origin when deploying. `CORS_ALLOWED_ORIGINS` remains
+supported for existing configurations. The API does not enable cross-origin
+cookies.
 
 Install the requirements and start the API from this directory:
 
@@ -86,3 +88,18 @@ The backend calculates delivery fees from straight-line pickup/destination
 distance using a GH₵ 5.00 base plus GH₵ 1.50/km, rounded to the nearest pesewa.
 The frontend displays the same calculation as an estimate; submitted client
 fees are ignored.
+
+## Campus logistics and telemetry
+
+Orders include a cargo tier, a distance-adjusted SLA deadline, breach/rebate
+fields, optional campus-pool membership, and rider temperature and route
+deviation telemetry. Cold-chain orders default to an 8°C maximum; two
+consecutive over-limit location reports mark the order compromised. Delivery
+proof is accepted only when the latest assigned-rider location is within 50 m
+of the destination. Audit history is SHA-256 hash chained and can be verified
+through `GET /api/v1/orders/{order_id}/verify-audit`. Campus pools are listed,
+created, and joined under `/api/v1/pools`.
+
+For Render, deploy from the repository's `render.yaml`; set `ALLOWED_ORIGINS`
+to the Vercel production origin and the local Vite origins you need. The
+`/healthz` endpoint is configured as the Render health check.

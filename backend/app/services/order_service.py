@@ -1,9 +1,11 @@
+from datetime import UTC, datetime
+
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.order import Order, OrderStatus
-from app.models.order_history import OrderStatusHistory
 from app.models.user import User
+from app.services.audit_service import append_audit_event, append_status_history
 
 ALLOWED_STATUS_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
     OrderStatus.PENDING: {
@@ -38,12 +40,30 @@ def transition_order(
             detail=f"Order cannot transition from {previous_status.value} to {new_status.value}",
         )
     order.current_status = new_status
-    db.add(
-        OrderStatusHistory(
-            order_id=order.id,
-            updated_by=actor.id,
-            previous_status=previous_status,
-            new_status=new_status,
-            remarks=remarks,
-        )
+    now = datetime.now(UTC)
+    append_status_history(
+        db,
+        order_id=order.id,
+        actor_id=actor.id,
+        old_status=previous_status,
+        new_status=new_status,
+        remarks=remarks,
+        timestamp=now,
     )
+    deadline = getattr(order, "sla_deadline", None)
+    if new_status == OrderStatus.DELIVERED and deadline is not None:
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=UTC)
+        if now > deadline and not order.sla_breached:
+            effective_fee = order.split_fee_ghs
+            if effective_fee is None:
+                effective_fee = float(order.delivery_fee)
+            order.sla_breached = True
+            order.rebate_credited_ghs = round(float(effective_fee) * 0.25, 2)
+            append_audit_event(
+                db,
+                order_id=order.id,
+                actor_id=actor.id,
+                status=new_status,
+                event="SLA_BREACH_REBATE_ISSUED",
+            )

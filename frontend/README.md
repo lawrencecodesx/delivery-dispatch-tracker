@@ -22,6 +22,14 @@ Set `VITE_API_BASE_URL` in `.env` if the backend URL differs. Set
 scene on the landing page. When unset, the page displays an animated local
 scene illustration instead. Restart Vite after changing environment variables.
 
+## Vercel deployment
+
+Import the `frontend/` directory as a Vercel project and set
+`VITE_API_BASE_URL` to the Render API origin with the `/api/v1` suffix (for
+example, `https://delivery-dispatch-api.onrender.com/api/v1`). The checked-in
+`vercel.json` sends client-side routes to the Vite entry point. Add the exact
+Vercel origin to the Render API's `ALLOWED_ORIGINS` value.
+
 ## Commands
 
 ```powershell
